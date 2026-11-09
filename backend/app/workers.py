@@ -11,6 +11,7 @@ A try-on takes the first free online worker (laptop preferred); when none is fre
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -66,6 +67,9 @@ class Pool:
                 self.workers["laptop"] = Worker("laptop", laptop_url.rstrip("/"), "laptop")
 
     def kaggle_settings(self) -> dict[str, str]:
+        topic = os.getenv("FITME_KAGGLE_TOPIC", "").strip()
+        if topic:  # cloud hosting: secrets come as environment variables, not files
+            return {"topic": topic, "key": os.getenv("FITME_KAGGLE_KEY", "").strip()}
         path = (self.data_dir or Path(".")) / "kaggle.json"
         if path.exists():
             try:

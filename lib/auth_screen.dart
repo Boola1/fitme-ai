@@ -310,6 +310,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   ),
                   const SizedBox(height: 16),
                   const ServerStatusCard(),
+                  const AppDownloadCard(),
                 ],
               ),
             ),

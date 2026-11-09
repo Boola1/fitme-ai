@@ -140,6 +140,66 @@ def try_on(c, color="navy"):
     return wait_job(c, r.json()["job_id"])
 
 
+# ------------------------------------------------------------------ web version
+@pytest.fixture()
+def web_dir(tmp_path, monkeypatch):
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "index.html").write_text("<title>FitMe web</title>", encoding="utf-8")
+    (site / "main.dart.js").write_text("// app", encoding="utf-8")
+    monkeypatch.setenv("FITME_WEB_APP_DIR", str(site))
+    return site
+
+
+def test_site_is_public_and_root_opens_it_for_browsers(web_dir, mod):
+    from fastapi.testclient import TestClient
+
+    c = TestClient(mod.app, follow_redirects=False)  # no access key, no account
+    page = c.get("/app/")
+    assert page.status_code == 200 and "FitMe web" in page.text
+    assert page.headers["cache-control"] == "no-cache"
+    assert c.get("/app/main.dart.js").headers["content-type"].startswith("text/javascript")
+
+    opened = c.get("/?key=abc", headers={"accept": "text/html"})
+    assert opened.status_code == 307 and opened.headers["location"] == "/app/?key=abc"
+    assert c.get("/", headers={"accept": "application/json"}).json()["app"] == "FitMe AI"
+
+
+def test_browser_can_read_rejections(mod):
+    from fastapi.testclient import TestClient
+
+    c = TestClient(mod.app)
+    origin = {"Origin": "https://fitme.example.test"}
+    refused = c.get("/api/v1/looks", headers=origin)
+    assert refused.status_code == 401
+    assert refused.headers["access-control-allow-origin"] == "*"
+
+    preflight = c.options(
+        "/api/v1/looks",
+        headers=origin | {
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization,x-fitme-key",
+        },
+    )
+    assert preflight.status_code == 200
+
+
+# ------------------------------------------------------------------ cloud hosting
+def test_firebase_key_can_come_from_environment(tmp_path, monkeypatch):
+    from app import store
+
+    monkeypatch.setenv("FITME_FIREBASE_CREDENTIALS_JSON", '{"project_id": "p1"}')
+    assert json.loads(store.credentials_path(tmp_path).read_text(encoding="utf-8"))["project_id"] == "p1"
+
+
+def test_kaggle_settings_can_come_from_environment(monkeypatch):
+    from app.workers import Pool
+
+    monkeypatch.setenv("FITME_KAGGLE_TOPIC", "t1")
+    monkeypatch.setenv("FITME_KAGGLE_KEY", "k1")
+    assert Pool().kaggle_settings() == {"topic": "t1", "key": "k1"}
+
+
 # ------------------------------------------------------------------ access
 def test_health_is_open_but_api_needs_key_and_account(mod, client):
     anon = new_client(mod)

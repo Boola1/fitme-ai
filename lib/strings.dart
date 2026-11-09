@@ -444,6 +444,15 @@ const stringsEn = <String, String>{
   'Подключён: проект {p}. Аккаунты, письма подтверждения и сброса пароля — через Firebase.': 'Connected: project {p}. Accounts and confirmation / password-reset letters go through Firebase.',
   'Не подключён. Запустите SETUP_FIREBASE.bat на ноутбуке.': 'Not connected. Run SETUP_FIREBASE.bat on the laptop.',
   'Данные можно смотреть и править в Firebase Console: Firestore → users, tryons, config.': 'You can view and edit the data in the Firebase Console: Firestore → users, tryons, config.',
+  'Этот сайт': 'This site',
+  'Этот компьютер': 'This computer',
+  'Сервер не принял ключ доступа. Откройте ссылку с ключом из окна запуска сервера или введите ключ.': 'The server rejected the access key. Open the link with the key from the server start window or enter the key.',
+  'Ввести ключ': 'Enter key',
+  'Ключ доступа': 'Access key',
+  'Ключ показан в окне START_LOCAL_GPU.bat на ноутбуке.': 'The key is shown in the START_LOCAL_GPU.bat window on the laptop.',
+  'Приложение для Android': 'Android app',
+  'Установите FitMe на телефон. После скачивания разрешите установку из этого источника.': 'Install FitMe on your phone. After downloading, allow installing from this source.',
+  'Скачать': 'Download',
 };
 
 const stringsKk = <String, String>{
@@ -889,4 +898,13 @@ const stringsKk = <String, String>{
   'Подключён: проект {p}. Аккаунты, письма подтверждения и сброса пароля — через Firebase.': 'Қосылған: {p} жобасы. Аккаунттар, растау және құпиясөзді қалпына келтіру хаттары — Firebase арқылы.',
   'Не подключён. Запустите SETUP_FIREBASE.bat на ноутбуке.': 'Қосылмаған. Ноутбукта SETUP_FIREBASE.bat іске қосыңыз.',
   'Данные можно смотреть и править в Firebase Console: Firestore → users, tryons, config.': 'Деректерді Firebase Console-да көріп, өзгертуге болады: Firestore → users, tryons, config.',
+  'Этот сайт': 'Осы сайт',
+  'Этот компьютер': 'Осы компьютер',
+  'Сервер не принял ключ доступа. Откройте ссылку с ключом из окна запуска сервера или введите ключ.': 'Сервер кіру кілтін қабылдамады. Сервер іске қосылған терезедегі кілті бар сілтемені ашыңыз немесе кілтті енгізіңіз.',
+  'Ввести ключ': 'Кілтті енгізу',
+  'Ключ доступа': 'Кіру кілті',
+  'Ключ показан в окне START_LOCAL_GPU.bat на ноутбуке.': 'Кілт ноутбуктегі START_LOCAL_GPU.bat терезесінде көрсетілген.',
+  'Приложение для Android': 'Android қолданбасы',
+  'Установите FitMe на телефон. После скачивания разрешите установку из этого источника.': 'FitMe қолданбасын телефонға орнатыңыз. Жүктегеннен кейін осы көзден орнатуға рұқсат беріңіз.',
+  'Скачать': 'Жүктеу',
 };

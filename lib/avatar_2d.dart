@@ -1,22 +1,19 @@
-import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'api.dart';
 import 'common.dart';
 import 'i18n.dart';
+import 'platform/local_files.dart';
 
 class AvatarPhotoStore {
   AvatarPhotoStore._();
 
 
-  static String? _cachedOriginalPath;
-  static String? _cachedPreviewPath;
   static String? _cachedFor;
   static String? lastCutoutError;
 
@@ -24,7 +21,7 @@ class AvatarPhotoStore {
   /// change, so widgets use this in their keys to show the new picture.
   static int revision = 0;
 
-  /// Every account on this phone has its own avatar files (a new user must not see someone else's photo).
+  /// Every account on this device has its own avatar files (a new user must not see someone else's photo).
   static String get _account {
     final id = Session.user.value?.id ?? 'guest';
     return id.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
@@ -33,84 +30,46 @@ class AvatarPhotoStore {
   static void _checkAccount() {
     if (_cachedFor != _account) {
       _cachedFor = _account;
-      _cachedOriginalPath = null;
-      _cachedPreviewPath = null;
       revision++;
     }
   }
 
-  static Future<void> _forgetCachedImages(Iterable<File> files) async {
-    for (final file in files) {
-      await FileImage(file).evict();
-    }
-  }
+  static String get _originalName => 'fitme_avatar_original_$_account.png';
 
-  static Future<Directory> _dir() => getApplicationDocumentsDirectory();
-
-  static Future<File> _file(String name) async {
-    final dir = await _dir();
-    return File('${dir.path}${Platform.pathSeparator}$name');
-  }
-
-  static Future<File> _originalFile() => _file('fitme_avatar_original_$_account.png');
-
-  static Future<File> _previewFile() => _file('fitme_avatar_cutout_$_account.png');
+  static String get _previewName => 'fitme_avatar_cutout_$_account.png';
 
   /// Before v5 the avatar had one name for the whole phone. Those files belonged to the
   /// creator (the only user then): they move to the creator's account, nobody else sees them.
   static Future<void> _claimSharedFiles() async {
     final shared = [
-      (await _file('fitme_avatar_original.png'), await _originalFile()),
-      (await _file('fitme_avatar_cutout.png'), await _previewFile()),
-      (await _file('fitme_2d_avatar.jpg'), await _originalFile()),
+      ('fitme_avatar_original.png', _originalName),
+      ('fitme_avatar_cutout.png', _previewName),
+      ('fitme_2d_avatar.jpg', _originalName),
     ];
     final isOwner = Session.user.value?.role == 'owner';
     for (final (old, target) in shared) {
-      if (!await old.exists()) continue;
-      if (isOwner && !await target.exists()) {
-        await old.rename(target.path);
+      if (!await LocalFiles.exists(old)) continue;
+      if (isOwner && !await LocalFiles.exists(target)) {
+        await LocalFiles.rename(old, target);
       } else if (isOwner) {
-        await old.delete();
+        await LocalFiles.delete(old);
       }
     }
   }
 
-  static Future<String?> loadPath() async {
+  static Future<XFile?> loadPhoto() async {
     _checkAccount();
-    if (_cachedOriginalPath != null &&
-        await File(_cachedOriginalPath!).exists()) {
-      return _cachedOriginalPath;
-    }
-
     await _claimSharedFiles();
-    final original = await _originalFile();
-    if (await original.exists()) {
-      _cachedOriginalPath = original.path;
-      return _cachedOriginalPath;
-    }
-    return null;
+    return LocalFiles.open(_originalName);
   }
 
-  static Future<String?> loadPreviewPath() async {
+  static Future<XFile?> loadPreview() async {
     _checkAccount();
-    if (_cachedPreviewPath != null &&
-        await File(_cachedPreviewPath!).exists()) {
-      return _cachedPreviewPath;
-    }
-
     await _claimSharedFiles();
-    final preview = await _previewFile();
-    if (await preview.exists()) {
-      _cachedPreviewPath = preview.path;
-      return _cachedPreviewPath;
-    }
-
-    final original = await loadPath();
-    _cachedPreviewPath = original;
-    return _cachedPreviewPath;
+    return await LocalFiles.open(_previewName) ?? await LocalFiles.open(_originalName);
   }
 
-  static Future<String> saveFromXFile(XFile source) async {
+  static Future<void> saveFromXFile(XFile source) async {
     final sourceBytes = await source.readAsBytes();
     final normalizedPng = await _AvatarCutoutProcessor.normalizeOriginalPng(
       sourceBytes,
@@ -127,16 +86,9 @@ class AvatarPhotoStore {
       lastCutoutError = error.toString();
     }
 
-    final original = await _originalFile();
-    final preview = await _previewFile();
-    await original.writeAsBytes(normalizedPng, flush: true);
-    await preview.writeAsBytes(previewPng, flush: true);
-
-    await _forgetCachedImages([original, preview]);
+    await LocalFiles.writeBytes(_originalName, normalizedPng);
+    await LocalFiles.writeBytes(_previewName, previewPng);
     revision++;
-    _cachedOriginalPath = original.path;
-    _cachedPreviewPath = preview.path;
-    return original.path;
   }
 
   static Future<Uint8List> _requestAiCutout(Uint8List bytes) async {
@@ -167,18 +119,9 @@ class AvatarPhotoStore {
   }
 
   static Future<void> delete() async {
-    for (final file in [
-      await _originalFile(),
-      await _previewFile(),
-    ]) {
-      if (await file.exists()) {
-        await file.delete();
-      }
-      await FileImage(file).evict();
-    }
+    await LocalFiles.delete(_originalName);
+    await LocalFiles.delete(_previewName);
     revision++;
-    _cachedOriginalPath = null;
-    _cachedPreviewPath = null;
   }
 }
 
@@ -201,7 +144,7 @@ class Avatar2DPreview extends StatefulWidget {
 }
 
 class _Avatar2DPreviewState extends State<Avatar2DPreview> {
-  String? path;
+  XFile? photo;
   bool loading = true;
 
   @override
@@ -211,10 +154,10 @@ class _Avatar2DPreviewState extends State<Avatar2DPreview> {
   }
 
   Future<void> _load() async {
-    final saved = await AvatarPhotoStore.loadPreviewPath();
+    final saved = await AvatarPhotoStore.loadPreview();
     if (!mounted) return;
     setState(() {
-      path = saved;
+      photo = saved;
       loading = false;
     });
   }
@@ -232,14 +175,14 @@ class _Avatar2DPreviewState extends State<Avatar2DPreview> {
       clipBehavior: Clip.antiAlias,
       child: loading
           ? Center(child: CircularProgressIndicator())
-          : path == null
+          : photo == null
           ? _EmptyAvatarPreview()
           : Stack(
               fit: StackFit.expand,
               children: [
                 AvatarImage(
                   key: ValueKey('preview-${AvatarPhotoStore.revision}'),
-                  path: path!,
+                  photo: photo!,
                 ),
                 Positioned(
                   left: 12,
@@ -254,19 +197,18 @@ class _Avatar2DPreviewState extends State<Avatar2DPreview> {
 
 /// The avatar photo as it is (no stretching: body measurements are not used any more).
 class AvatarImage extends StatelessWidget {
-  const AvatarImage({super.key, required this.path});
+  const AvatarImage({super.key, required this.photo});
 
-  final String path;
+  final XFile photo;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-      child: Image.file(
-        File(path),
+      child: PhotoImage(
+        photo,
         fit: BoxFit.contain,
         alignment: Alignment.bottomCenter,
-        gaplessPlayback: true,
         errorBuilder: (_, _, _) => const _EmptyAvatarPreview(),
       ),
     );
@@ -283,7 +225,7 @@ class Avatar2DScreen extends StatefulWidget {
 class _Avatar2DScreenState extends State<Avatar2DScreen> {
   final picker = ImagePicker();
 
-  String? avatarPath;
+  XFile? avatar;
   bool loading = true;
   bool picking = false;
 
@@ -294,10 +236,10 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
   }
 
   Future<void> _loadAvatar() async {
-    final path = await AvatarPhotoStore.loadPreviewPath();
+    final saved = await AvatarPhotoStore.loadPreview();
     if (!mounted) return;
     setState(() {
-      avatarPath = path;
+      avatar = saved;
       loading = false;
     });
   }
@@ -311,13 +253,13 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
     if (image == null || !mounted) return;
     setState(() {
       picking = true;
-      loading = avatarPath == null;
+      loading = avatar == null;
     });
     try {
       await AvatarPhotoStore.saveFromXFile(image);
-      final saved = await AvatarPhotoStore.loadPreviewPath();
+      final saved = await AvatarPhotoStore.loadPreview();
       if (!mounted) return;
-      setState(() => avatarPath = saved);
+      setState(() => avatar = saved);
     } catch (e) {
       if (mounted) showMessage(context, t('Не удалось сохранить фото: {e}', {'e': e}));
     } finally {
@@ -343,7 +285,7 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
     if (!ok) return;
     await AvatarPhotoStore.delete();
     if (!mounted) return;
-    setState(() => avatarPath = null);
+    setState(() => avatar = null);
   }
 
   @override
@@ -358,7 +300,8 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
           ),
         ],
       ),
-      body: ListView(
+      body: PageWidth(
+        child: ListView(
         padding: EdgeInsets.fromLTRB(20, 10, 20, 32),
         children: [
           Container(
@@ -371,14 +314,14 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
             clipBehavior: Clip.antiAlias,
             child: loading
                 ? Center(child: CircularProgressIndicator())
-                : avatarPath == null
+                : avatar == null
                 ? _CreateAvatarHint()
                 : Stack(
                     fit: StackFit.expand,
                     children: [
                       AvatarImage(
                         key: ValueKey('avatar-${AvatarPhotoStore.revision}'),
-                        path: avatarPath!,
+                        photo: avatar!,
                       ),
                       if (picking)
                         ColoredBox(
@@ -403,7 +346,7 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
                   ),
           ),
           SizedBox(height: 14),
-          if (avatarPath == null) ...[
+          if (avatar == null) ...[
             FilledButton.icon(
               onPressed: picking ? null : () => _pick(ImageSource.camera),
               icon: Icon(Icons.camera_alt),
@@ -457,6 +400,7 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
             ),
           ),
         ],
+        ),
       ),
     );
   }

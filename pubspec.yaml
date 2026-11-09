@@ -38,6 +38,8 @@ dependencies:
   url_launcher: ^6.3.2
   path_provider: ^2.1.6
   http: ^1.6.0
+  http_parser: ^4.1.2
+  web: ^1.1.1
 
 dev_dependencies:
   flutter_test:

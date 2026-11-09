@@ -82,6 +82,7 @@ discovery.json
 tunnel_status.txt
 backend/data/
 backend/catalog/
+backend/app/web_app/
 close_log.txt
 test_output/
 backend/data/hf_token.txt

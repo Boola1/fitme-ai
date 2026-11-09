@@ -1,15 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
 import 'common.dart';
 import 'firebase_auth.dart';
 import 'i18n.dart';
+import 'platform/local_files.dart';
 
-/// Small JSON file in the app documents folder for settings that must survive
+/// Small JSON file on the device for settings that must survive
 /// app restarts (server address, account token, theme, language).
 class SettingsStore {
   SettingsStore._();
@@ -17,16 +20,13 @@ class SettingsStore {
   static Map<String, dynamic> _cache = {};
   static Timer? _debounce;
 
-  static Future<File> _file() async {
-    final dir = await getApplicationDocumentsDirectory();
-    return File('${dir.path}${Platform.pathSeparator}fitme_settings.json');
-  }
+  static const _fileName = 'fitme_settings.json';
 
   static Future<void> load() async {
     try {
-      final file = await _file();
-      if (await file.exists()) {
-        final data = jsonDecode(await file.readAsString());
+      final bytes = await LocalFiles.readBytes(_fileName);
+      if (bytes != null) {
+        final data = jsonDecode(utf8.decode(bytes));
         if (data is Map<String, dynamic>) _cache = data;
       }
     } catch (_) {
@@ -51,8 +51,7 @@ class SettingsStore {
 
   static Future<void> _flush() async {
     try {
-      final file = await _file();
-      await file.writeAsString(jsonEncode(_cache), flush: true);
+      await LocalFiles.writeBytes(_fileName, utf8.encode(jsonEncode(_cache)));
     } catch (_) {
       // Settings are a convenience; never crash the app because of them.
     }
@@ -66,12 +65,25 @@ class SettingsStore {
 class ServerConfig {
   ServerConfig._();
 
-  static const String accessKey = String.fromEnvironment('FITME_KEY');
+  static const String _builtInKey = String.fromEnvironment('FITME_KEY');
   static const String discoveryTopic = String.fromEnvironment('FITME_TOPIC');
-  static const String usbUrl = String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'http://127.0.0.1:8000',
-  );
+  static const String _builtInUrl = String.fromEnvironment('API_BASE_URL');
+
+  /// The site is served by the backend itself, so in a browser the server is its own origin.
+  static final String usbUrl = _builtInUrl.isNotEmpty
+      ? _builtInUrl
+      : kIsWeb
+      ? Uri.base.origin
+      : 'http://127.0.0.1:8000';
+
+  /// Built into the APK. A website is public, so its key comes from the link or a dialog instead.
+  static String get accessKey =>
+      _builtInKey.isNotEmpty ? _builtInKey : SettingsStore.get<String>('access_key') ?? '';
+
+  static void setAccessKey(String raw) {
+    final value = raw.trim();
+    SettingsStore.set('access_key', value.isEmpty ? null : value);
+  }
 
   static final ValueNotifier<String> baseUrlNotifier = ValueNotifier(usbUrl);
   static final ValueNotifier<bool> searching = ValueNotifier(false);
@@ -90,6 +102,10 @@ class ServerConfig {
 
   static String routeLabel([String? url]) {
     final u = url ?? baseUrl;
+    if (kIsWeb) {
+      if (u == Uri.base.origin) return 'Этот сайт';
+      if (u.contains('127.0.0.1') || u.contains('localhost')) return 'Этот компьютер';
+    }
     if (u.contains('127.0.0.1') || u.contains('localhost')) return 'USB-кабель';
     if (u.contains('trycloudflare.com') || u.contains('pinggy.link')) return 'Интернет';
     if (u.contains('hf.space')) return 'Облако';
@@ -111,6 +127,11 @@ class ServerConfig {
   }
 
   static Future<void> init() async {
+    if (kIsWeb && Uri.base.queryParameters.containsKey('key')) {
+      // The link printed by START_LOCAL_GPU.bat: keep the key, do not leave it in the address bar.
+      setAccessKey(Uri.base.queryParameters['key']!);
+      clearBrowserQuery();
+    }
     final saved = SettingsStore.get<String>('last_url');
     if (saved != null && saved.isNotEmpty) baseUrlNotifier.value = saved;
   }
@@ -135,23 +156,18 @@ class ServerConfig {
   }
 
   static Future<bool> isFitMe(String url, {Duration? timeout}) async {
-    final client = HttpClient()
-      ..connectionTimeout = timeout ?? Duration(seconds: 4);
+    final client = http.Client();
     try {
-      final request = await client
-          .getUrl(Uri.parse('$url/health'))
+      final response = await client
+          .get(Uri.parse('$url/health'))
           .timeout(timeout ?? Duration(seconds: 6));
-      final response = await request.close().timeout(
-        timeout ?? Duration(seconds: 6),
-      );
       if (response.statusCode != 200) return false;
-      final body = await response.transform(utf8.decoder).join();
-      final data = jsonDecode(body);
+      final data = jsonDecode(utf8.decode(response.bodyBytes));
       return data is Map && data['app'] == 'FitMe AI';
     } catch (_) {
       return false;
     } finally {
-      client.close(force: true);
+      client.close();
     }
   }
 
@@ -227,21 +243,24 @@ class ServerConfig {
   /// The laptop publishes {"lan": ..., "tunnel": ...} to a private ntfy.sh topic.
   static Future<List<String>> _announcedUrls() async {
     if (discoveryTopic.isEmpty) return [];
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    final client = http.Client();
     try {
       final uri = Uri.parse(
         'https://ntfy.sh/$discoveryTopic/json?poll=1&since=12h',
       );
-      final request = await client.getUrl(uri).timeout(Duration(seconds: 8));
-      final response = await request.close().timeout(Duration(seconds: 10));
-      final body = await response.transform(utf8.decoder).join();
+      final response = await client.get(uri).timeout(Duration(seconds: 10));
+      final body = utf8.decode(response.bodyBytes);
       Map<String, dynamic>? latest;
       for (final line in LineSplitter().convert(body)) {
         if (line.trim().isEmpty) continue;
-        final event = jsonDecode(line);
-        if (event is Map && event['event'] == 'message') {
-          final message = jsonDecode(event['message'].toString());
-          if (message is Map<String, dynamic>) latest = message;
+        try {
+          final event = jsonDecode(line);
+          if (event is Map && event['event'] == 'message') {
+            final message = jsonDecode(event['message'].toString());
+            if (message is Map<String, dynamic>) latest = message;
+          }
+        } on FormatException {
+          continue; // one broken message must not hide the good ones after it
         }
       }
       if (latest == null) return [];
@@ -253,7 +272,7 @@ class ServerConfig {
     } catch (_) {
       return [];
     } finally {
-      client.close(force: true);
+      client.close();
     }
   }
 }
@@ -514,6 +533,9 @@ class FitMeApiException implements Exception {
   String toString() => message;
 }
 
+/// [FitMeApiException.code] when the server rejected the tunnel access key.
+const kBadKeyCode = 'bad_key';
+
 class FitMeApi {
   FitMeApi._();
 
@@ -521,6 +543,12 @@ class FitMeApi {
   static const _uploadTimeout = Duration(seconds: 120);
 
   static FitMeApiException _error(int status, String body, String path) {
+    if (body.trimLeft().startsWith('<')) {
+      // A web page instead of the FitMe server's JSON: site hosting or a dead tunnel answered.
+      return FitMeApiException(
+        t('Нет связи с сервером FitMe. Проверьте, что ноутбук включён и START_LOCAL_GPU.bat запущен.'),
+      );
+    }
     String? message;
     String? code;
     try {
@@ -534,7 +562,10 @@ class FitMeApi {
       }
     } catch (_) {}
     if (status == 401 && message != null && message.contains('FitMe key')) {
-      message = t('Сервер не принял ключ доступа. Переустановите приложение через INSTALL_ON_PHONE.bat.');
+      code = kBadKeyCode;
+      message = kIsWeb
+          ? t('Сервер не принял ключ доступа. Откройте ссылку с ключом из окна запуска сервера или введите ключ.')
+          : t('Сервер не принял ключ доступа. Переустановите приложение через INSTALL_ON_PHONE.bat.');
     } else if (status == 401 && !path.startsWith('/api/v1/auth/')) {
       // The token expired, was revoked (password changed, account blocked) - sign in again.
       Session.clear();
@@ -551,7 +582,7 @@ class FitMeApi {
   static Future<T> _withRediscovery<T>(Future<T> Function() action) async {
     try {
       return await action();
-    } on SocketException {
+    } on http.ClientException {
       if (await ServerConfig.discover()) return action();
       throw FitMeApiException(
         t('Нет связи с сервером FitMe. Проверьте, что ноутбук включён и START_LOCAL_GPU.bat запущен.'),
@@ -559,9 +590,6 @@ class FitMeApi {
     } on TimeoutException {
       if (await ServerConfig.discover()) return action();
       throw FitMeApiException(t('Сервер не отвечает. Попробуйте ещё раз.'));
-    } on HttpException {
-      if (await ServerConfig.discover()) return action();
-      throw FitMeApiException(t('Связь с сервером прервалась. Попробуйте ещё раз.'));
     }
   }
 
@@ -572,22 +600,24 @@ class FitMeApi {
   }) async {
     await Session.ensureFresh();
     return _withRediscovery(() async {
-      final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+      final client = http.Client();
       try {
-        final uri = Uri.parse('${ServerConfig.baseUrl}$path');
-        final request = await client.openUrl(method, uri).timeout(_jsonTimeout);
-        ServerConfig.headers.forEach(request.headers.set);
-        request.headers.contentType = ContentType.json;
-        if (body != null) request.write(jsonEncode(body));
-        final response = await request.close().timeout(_jsonTimeout);
-        final text = await response.transform(utf8.decoder).join();
+        final request = http.Request(method, Uri.parse('${ServerConfig.baseUrl}$path'))
+          ..headers.addAll(ServerConfig.headers);
+        if (body != null) {
+          request.headers['Content-Type'] = 'application/json';
+          request.body = jsonEncode(body);
+        }
+        final streamed = await client.send(request).timeout(_jsonTimeout);
+        final response = await http.Response.fromStream(streamed).timeout(_jsonTimeout);
+        final text = utf8.decode(response.bodyBytes);
         if (response.statusCode < 200 || response.statusCode >= 300) {
           throw _error(response.statusCode, text, path);
         }
         if (text.isEmpty) return <String, dynamic>{};
         return jsonDecode(text) as Map<String, dynamic>;
       } finally {
-        client.close(force: true);
+        client.close();
       }
     });
   }
@@ -599,58 +629,38 @@ class FitMeApi {
   }) async {
     await Session.ensureFresh();
     return _withRediscovery(() async {
-      final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+      final client = http.Client();
       try {
-        final uri = Uri.parse('${ServerConfig.baseUrl}$path');
-        final request = await client.postUrl(uri).timeout(_jsonTimeout);
-        ServerConfig.headers.forEach(request.headers.set);
-        final boundary = '----FitMe${DateTime.now().microsecondsSinceEpoch}';
-        request.headers.set(
-          HttpHeaders.contentTypeHeader,
-          'multipart/form-data; boundary=$boundary',
-        );
-
-        for (final entry in fields.entries) {
-          request.add(utf8.encode('--$boundary\r\n'));
-          request.add(
-            utf8.encode(
-              'Content-Disposition: form-data; name="${entry.key}"\r\n\r\n',
-            ),
-          );
-          request.add(utf8.encode('${entry.value}\r\n'));
-        }
-
+        final request = http.MultipartRequest('POST', Uri.parse('${ServerConfig.baseUrl}$path'))
+          ..headers.addAll(ServerConfig.headers)
+          ..fields.addAll(fields);
         for (final entry in files) {
           final file = entry.value;
-          final bytes = await file.readAsBytes();
           final name = file.name.replaceAll('"', '');
           final lower = name.toLowerCase();
-          final mime = lower.endsWith('.png')
-              ? 'image/png'
+          final subtype = lower.endsWith('.png')
+              ? 'png'
               : lower.endsWith('.webp')
-              ? 'image/webp'
-              : 'image/jpeg';
-          request.add(utf8.encode('--$boundary\r\n'));
-          request.add(
-            utf8.encode(
-              'Content-Disposition: form-data; '
-              'name="${entry.key}"; filename="$name"\r\n',
+              ? 'webp'
+              : 'jpeg';
+          request.files.add(
+            http.MultipartFile.fromBytes(
+              entry.key,
+              await file.readAsBytes(),
+              filename: name,
+              contentType: MediaType('image', subtype),
             ),
           );
-          request.add(utf8.encode('Content-Type: $mime\r\n\r\n'));
-          request.add(bytes);
-          request.add(utf8.encode('\r\n'));
         }
-
-        request.add(utf8.encode('--$boundary--\r\n'));
-        final response = await request.close().timeout(_uploadTimeout);
-        final text = await response.transform(utf8.decoder).join();
+        final streamed = await client.send(request).timeout(_uploadTimeout);
+        final response = await http.Response.fromStream(streamed).timeout(_uploadTimeout);
+        final text = utf8.decode(response.bodyBytes);
         if (response.statusCode < 200 || response.statusCode >= 300) {
           throw _error(response.statusCode, text, path);
         }
         return jsonDecode(text) as Map<String, dynamic>;
       } finally {
-        client.close(force: true);
+        client.close();
       }
     });
   }
@@ -973,6 +983,74 @@ class NetImage extends StatelessWidget {
           child: Icon(Icons.image_not_supported_outlined, color: FitColors.line2, size: 34),
         );
       },
+    );
+  }
+}
+
+/// A picked or saved photo (works on phones and in the browser, where there are no file paths).
+class PhotoImage extends StatefulWidget {
+  const PhotoImage(
+    this.file, {
+    super.key,
+    this.fit = BoxFit.contain,
+    this.alignment = Alignment.center,
+    this.errorBuilder,
+  });
+
+  final XFile file;
+  final BoxFit fit;
+  final Alignment alignment;
+  final ImageErrorWidgetBuilder? errorBuilder;
+
+  @override
+  State<PhotoImage> createState() => _PhotoImageState();
+}
+
+class _PhotoImageState extends State<PhotoImage> {
+  Uint8List? _bytes;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(PhotoImage old) {
+    super.didUpdateWidget(old);
+    if (!identical(old.file, widget.file)) _load();
+  }
+
+  Future<void> _load() async {
+    final file = widget.file;
+    try {
+      final bytes = await file.readAsBytes();
+      if (mounted && identical(file, widget.file)) {
+        setState(() {
+          _bytes = bytes;
+          _error = null;
+        });
+      }
+    } catch (e) {
+      if (mounted && identical(file, widget.file)) setState(() => _error = e);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final error = _error;
+    if (error != null) {
+      return widget.errorBuilder?.call(context, error, null) ?? const SizedBox.shrink();
+    }
+    final bytes = _bytes;
+    if (bytes == null) return const SizedBox.shrink();
+    return Image.memory(
+      bytes,
+      fit: widget.fit,
+      alignment: widget.alignment,
+      gaplessPlayback: true,
+      errorBuilder: widget.errorBuilder,
     );
   }
 }

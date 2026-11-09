@@ -77,6 +77,11 @@ echo.
 echo ================================================================
 echo  FitMe is running. Phone works by Wi-Fi or mobile internet -
 echo  keep the laptop ON, plugged in and online. Do not close the 3 FitMe windows.
+if exist "backend\app\web_app\index.html" (
+  echo.
+  echo  Web version: http://127.0.0.1:8000/app/?key=%FITME_API_KEY%
+  echo  From another device use the Wi-Fi or tunnel address instead of 127.0.0.1.
+)
 echo ================================================================
 pause
 endlocal

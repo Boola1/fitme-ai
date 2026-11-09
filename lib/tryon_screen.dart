@@ -1,15 +1,14 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'api.dart';
 import 'avatar_2d.dart';
 import 'common.dart';
 import 'i18n.dart';
+import 'platform/local_files.dart';
 
 const int kMaxOutfitItems = 3;
 
@@ -33,35 +32,34 @@ class PersonPhotoStore {
 
   static String get _key => 'person_path_$_account';
 
-  static Future<String?> loadPath() async {
+  static Future<XFile?> loadPhoto() async {
     final saved = SettingsStore.get<String>(_key);
-    if (saved != null && await File(saved).exists()) return saved;
-    return AvatarPhotoStore.loadPath();
+    if (saved != null) {
+      // Older versions saved the full path; the folder is always the same.
+      final photo = await LocalFiles.open(saved.split(RegExp(r'[\\/]')).last);
+      if (photo != null) return photo;
+    }
+    return AvatarPhotoStore.loadPhoto();
   }
 
-  static void remember(String path) => SettingsStore.set(_key, path);
+  static void remember(String name) => SettingsStore.set(_key, name);
 
-  /// Copies a picked photo under a new unique name, so Flutter never shows a
-  /// cached older picture, and removes the previous copy.
-  static Future<String> save(XFile image) async {
-    final dir = await getApplicationDocumentsDirectory();
+  /// Copies a picked photo under a new unique name and removes the previous copy.
+  static Future<XFile> save(XFile image) async {
     final lower = image.name.toLowerCase();
     final ext = lower.endsWith('.png') ? '.png' : '.jpg';
-    final path = '${dir.path}${Platform.pathSeparator}'
-        'tryon_person_${_account}_${DateTime.now().millisecondsSinceEpoch}$ext';
-    await image.saveTo(path);
+    final prefix = 'tryon_person_${_account}_';
+    final name = '$prefix${DateTime.now().millisecondsSinceEpoch}$ext';
+    await LocalFiles.writeBytes(name, await image.readAsBytes());
     try {
-      await for (final entity in dir.list()) {
-        final name = entity.uri.pathSegments.last;
-        if (entity is File && name.startsWith('tryon_person_${_account}_') && entity.path != path) {
-          await entity.delete();
-        }
+      for (final old in await LocalFiles.list(prefix)) {
+        if (old != name) await LocalFiles.delete(old);
       }
     } catch (_) {
       // Old copies are only a few MB; never fail the pick because of cleanup.
     }
-    remember(path);
-    return path;
+    remember(name);
+    return (await LocalFiles.open(name))!;
   }
 }
 
@@ -175,9 +173,9 @@ class TryOnScreenState extends State<TryOnScreen> {
   // ------------------------------------------------------------------ person
 
   Future<void> _loadPerson() async {
-    final path = await PersonPhotoStore.loadPath();
-    if (!mounted || path == null || personPhoto != null) return;
-    setState(() => personPhoto = XFile(path));
+    final photo = await PersonPhotoStore.loadPhoto();
+    if (!mounted || photo == null || personPhoto != null) return;
+    setState(() => personPhoto = photo);
   }
 
   Future<void> _pickPerson(ImageSource source) async {
@@ -203,10 +201,10 @@ class TryOnScreenState extends State<TryOnScreen> {
     if (image == null || !mounted) return;
     setState(() => pickingPerson = true);
     try {
-      final path = await PersonPhotoStore.save(image);
+      final photo = await PersonPhotoStore.save(image);
       if (!mounted) return;
       setState(() {
-        personPhoto = XFile(path);
+        personPhoto = photo;
         _resetResult();
       });
     } catch (e) {
@@ -217,24 +215,21 @@ class TryOnScreenState extends State<TryOnScreen> {
   }
 
   Future<void> _useSavedAvatar() async {
-    var path = await AvatarPhotoStore.loadPath();
-    if (path == null && mounted) {
+    var photo = await AvatarPhotoStore.loadPhoto();
+    if (photo == null && mounted) {
       await Navigator.of(
         context,
       ).push(MaterialPageRoute(builder: (_) => Avatar2DScreen()));
-      path = await AvatarPhotoStore.loadPath();
+      photo = await AvatarPhotoStore.loadPhoto();
     }
     if (!mounted) return;
-    if (path == null) {
+    if (photo == null) {
       showMessage(context, t('Аватар ещё не создан'));
       return;
     }
-    // The avatar file keeps its name when re-shot: drop the old decoded picture.
-    await FileImage(File(path)).evict();
-    PersonPhotoStore.remember(path);
-    if (!mounted) return;
+    PersonPhotoStore.remember(photo.name);
     setState(() {
-      personPhoto = XFile(path!);
+      personPhoto = photo;
       _resetResult();
     });
   }
@@ -653,7 +648,7 @@ class TryOnScreenState extends State<TryOnScreen> {
     });
     if (error == null) {
       // Bring the new picture into view (the form above it is long).
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      void reveal(bool mayJump) {
         final ctx = _resultKey.currentContext;
         if (ctx != null) {
           Scrollable.ensureVisible(
@@ -661,8 +656,14 @@ class TryOnScreenState extends State<TryOnScreen> {
             duration: const Duration(milliseconds: 450),
             curve: Curves.easeOutCubic,
           );
+        } else if (mayJump && _scroll.hasClients) {
+          // The list builds only what is near the screen: go to its end so the result exists.
+          _scroll.jumpTo(_scroll.position.maxScrollExtent);
+          WidgetsBinding.instance.addPostFrameCallback((_) => reveal(false));
         }
-      });
+      }
+
+      WidgetsBinding.instance.addPostFrameCallback((_) => reveal(true));
     }
   }
 
@@ -820,7 +821,7 @@ class TryOnScreenState extends State<TryOnScreen> {
           GestureDetector(
             onTap: personPhoto == null
                 ? null
-                : () => openZoom(context, Image.file(File(personPhoto!.path))),
+                : () => openZoom(context, PhotoImage(personPhoto!)),
             child: Container(
               height: 240,
               width: double.infinity,
@@ -844,9 +845,8 @@ class TryOnScreenState extends State<TryOnScreen> {
                   : Stack(
                       fit: StackFit.expand,
                       children: [
-                        Image.file(
-                          File(personPhoto!.path),
-                          key: ValueKey(personPhoto!.path),
+                        PhotoImage(
+                          personPhoto!,
                           fit: BoxFit.contain,
                           alignment: Alignment.topCenter,
                           errorBuilder: (_, _, _) => Center(
@@ -1329,7 +1329,7 @@ class TryOnScreenState extends State<TryOnScreen> {
               borderRadius: BorderRadius.circular(18),
             ),
             child: BeforeAfterView(
-              before: Image.file(File(personPhoto!.path), fit: BoxFit.contain),
+              before: PhotoImage(personPhoto!),
               after: NetImage(shownUrl ?? resultUrl!, fit: BoxFit.contain),
             ),
           ),
@@ -1377,7 +1377,7 @@ class _GarmentTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final Widget image = item.catalog != null
         ? NetImage(item.catalog!.imageUrl, fit: BoxFit.contain)
-        : Image.file(File(item.photo!.path), fit: BoxFit.cover);
+        : PhotoImage(item.photo!, fit: BoxFit.cover);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <!-- Replaced with the value of `flutter build web --base-href`. -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="FitMe AI: виртуальная примерка одежды по вашему фото.">
+  <meta name="theme-color" content="#0E0F14">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="FitMe AI">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="manifest" href="manifest.json">
+  <title>FitMe AI</title>
+
+  <style>
+    /* Shown until Flutter paints its first frame on top of it. */
+    html, body { height: 100%; margin: 0; background: #F4F3F9; }
+    #loading {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 18px;
+      color: #5B4BD6; font: 800 22px system-ui, sans-serif;
+    }
+    #loading i {
+      width: 30px; height: 30px; border-radius: 50%;
+      border: 3px solid rgba(139, 124, 246, .25); border-top-color: #8B7CF6;
+      animation: spin .9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-color-scheme: dark) {
+      html, body { background: #0E0F14; }
+      #loading { color: #B9AEFF; }
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">FitMe AI<i></i></div>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

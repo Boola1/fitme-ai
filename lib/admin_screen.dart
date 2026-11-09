@@ -57,8 +57,11 @@ class _AdminScreenState extends State<AdminScreen> {
             ],
           ),
         ),
-        body: const TabBarView(
-          children: [_OverviewTab(), _UsersTab(), _JobsTab(), _SettingsTab()],
+        body: const PageWidth(
+          maxWidth: 1000,
+          child: TabBarView(
+            children: [_OverviewTab(), _UsersTab(), _JobsTab(), _SettingsTab()],
+          ),
         ),
       ),
     );

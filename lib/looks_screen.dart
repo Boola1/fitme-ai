@@ -211,8 +211,8 @@ class _LooksScreenState extends State<LooksScreen> {
               shrinkWrap: true,
               physics: NeverScrollableScrollPhysics(),
               itemCount: looks.length,
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
+              gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 240,
                 mainAxisSpacing: 14,
                 crossAxisSpacing: 14,
                 childAspectRatio: 0.58,

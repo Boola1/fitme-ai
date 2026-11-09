@@ -68,6 +68,11 @@ class Store:
 
 # ---------------------------------------------------------------- Firebase
 def credentials_path(data_dir: Path) -> Path:
+    inline = os.getenv("FITME_FIREBASE_CREDENTIALS_JSON", "").strip()
+    if inline:  # cloud hosting: secrets come as environment variables, not files
+        path = data_dir / "firebase-service-account.json"
+        path.write_text(inline, encoding="utf-8")
+        return path
     env = os.getenv("FITME_FIREBASE_CREDENTIALS", "").strip()
     return Path(env) if env else data_dir / "firebase-service-account.json"
 

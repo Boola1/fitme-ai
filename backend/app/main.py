@@ -21,7 +21,7 @@ import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps
 from pydantic import BaseModel
@@ -42,6 +42,14 @@ CATALOG_FILE = DATA_DIR / "catalog.json"
 REMOTE_URL_FILE = DATA_DIR / "remote_ai_url.txt"
 DB_FILE = DATA_DIR / "fitme.db"
 WEB_DIR = Path(__file__).resolve().parent / "web"
+# The Flutter Web build (BUILD_WEB.bat copies it here); the site is served at /app/.
+WEB_APP_DIR = Path(os.getenv("FITME_WEB_APP_DIR") or Path(__file__).resolve().parent / "web_app")
+WEB_APP_PATH = "/app"
+# The Windows registry can map these to text/plain, and browsers then refuse to run them.
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/javascript", ".mjs")
+mimetypes.add_type("application/wasm", ".wasm")
+mimetypes.add_type("application/vnd.android.package-archive", ".apk")
 
 for path in (UPLOAD_DIR, GENERATED_DIR, CATALOG_DIR, DATA_DIR):
     path.mkdir(parents=True, exist_ok=True)
@@ -75,14 +83,6 @@ app = FastAPI(
     title="FitMe AI",
     version=APP_VERSION,
     description="FitMe: Flutter -> FastAPI -> FASHN VTON 1.5 on your own GPU, with accounts and analytics",
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 # ---------------------------------------------------------------- database
@@ -168,6 +168,11 @@ async def access_and_usage(request: Request, call_next):
     request.state.user = None
     if request.method == "OPTIONS":
         return await call_next(request)
+    if path == WEB_APP_PATH or path.startswith(f"{WEB_APP_PATH}/"):
+        # The site's own files are public: they hold no data, and the key is only known after they load.
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-cache"  # a new build must not be stuck in browser caches
+        return response
     if API_KEY and path not in OPEN_PATHS:
         supplied = request.headers.get("x-fitme-key") or request.query_params.get("key") or ""
         if supplied != API_KEY:
@@ -195,9 +200,20 @@ async def access_and_usage(request: Request, call_next):
     return response
 
 
+# Added after access_and_usage so that it wraps it: a browser must be able to read the 401 answers too.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 app.mount("/generated", StaticFiles(directory=str(GENERATED_DIR)), name="generated")
 app.mount("/catalog", StaticFiles(directory=str(CATALOG_DIR)), name="catalog")
+if (WEB_APP_DIR / "index.html").is_file():
+    app.mount(WEB_APP_PATH, StaticFiles(directory=str(WEB_APP_DIR), html=True), name="web_app")
 
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
@@ -991,7 +1007,10 @@ if os.getenv("FITME_SAMPLER", "1") != "0":
 
 
 @app.get("/")
-def root():
+def root(request: Request):
+    if (WEB_APP_DIR / "index.html").is_file() and "text/html" in request.headers.get("accept", ""):
+        query = f"?{request.url.query}" if request.url.query else ""  # keeps ?key=... of the start link
+        return RedirectResponse(f"{WEB_APP_PATH}/{query}", status_code=307)
     return {
         "app": "FitMe AI",
         "version": APP_VERSION,

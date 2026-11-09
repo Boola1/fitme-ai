@@ -1,7 +1,88 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'i18n.dart';
+
+/// The website's link to the Android app; stays hidden until the APK is part of the site.
+class AppDownloadCard extends StatefulWidget {
+  const AppDownloadCard({super.key});
+
+  @override
+  State<AppDownloadCard> createState() => _AppDownloadCardState();
+}
+
+class _AppDownloadCardState extends State<AppDownloadCard> {
+  final Uri _apk = Uri.base.resolve('downloads/FitMe.apk');
+  bool _available = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (kIsWeb) _check();
+  }
+
+  Future<void> _check() async {
+    try {
+      final response = await http.head(_apk);
+      if (mounted && response.statusCode == 200) setState(() => _available = true);
+    } catch (_) {
+      // No link is better than a broken one.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_available) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: SectionCard(
+        child: Row(
+          children: [
+            Icon(Icons.android, color: FitColors.ok, size: 34),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(t('Приложение для Android'), style: const TextStyle(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 2),
+                  HintText(t('Установите FitMe на телефон. После скачивания разрешите установку из этого источника.')),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              onPressed: () => launchUrl(_apk, webOnlyWindowName: '_self'),
+              icon: const Icon(Icons.download_rounded),
+              label: Text(t('Скачать')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Keeps a phone-sized column readable in a wide browser window.
+class PageWidth extends StatelessWidget {
+  const PageWidth({super.key, this.maxWidth = 720, required this.child});
+
+  final double maxWidth;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        child: child,
+      ),
+    );
+  }
+}
 
 /// Shared colours. They follow the current theme: FitMeApp sets [dark] before
 /// the screens are built and rebuilds the whole tree when it changes.

@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 
 import 'admin_screen.dart';
@@ -124,10 +126,26 @@ ThemeData buildTheme(Brightness brightness) {
         ),
       ),
     ),
+    navigationRailTheme: NavigationRailThemeData(
+      backgroundColor: FitColors.card,
+      indicatorColor: FitColors.accent.withValues(alpha: dark ? .28 : .14),
+      selectedIconTheme: IconThemeData(color: FitColors.accentSoft),
+      unselectedIconTheme: IconThemeData(color: FitColors.muted),
+      selectedLabelTextStyle: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: FitColors.text),
+      unselectedLabelTextStyle: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: FitColors.muted),
+    ),
     snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
   );
   FitColors.dark = previous;
   return theme;
+}
+
+/// In a browser lists can also be dragged with the mouse (the outfit row has no scrollbar).
+class _FitScrollBehavior extends MaterialScrollBehavior {
+  const _FitScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => {...super.dragDevices, PointerDeviceKind.mouse};
 }
 
 class FitMeApp extends StatefulWidget {
@@ -174,6 +192,7 @@ class _FitMeAppState extends State<FitMeApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'FitMe AI',
+      scrollBehavior: const _FitScrollBehavior(),
       themeMode: AppSettings.themeMode,
       theme: buildTheme(Brightness.light),
       darkTheme: buildTheme(Brightness.dark),
@@ -284,60 +303,86 @@ class _FitMeShellState extends State<FitMeShell> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final wide = width >= 840; // a browser window or a tablet: side menu instead of the bottom bar
+    final extended = width >= 1180;
+    final tabs = <(IconData, IconData, String)>[
+      (Icons.home_outlined, Icons.home_rounded, t('Главная')),
+      (Icons.checkroom_outlined, Icons.checkroom, t('Каталог')),
+      (Icons.auto_awesome_outlined, Icons.auto_awesome, t('Примерка')),
+      (Icons.favorite_border, Icons.favorite, t('Луки')),
+      (Icons.person_outline, Icons.person, t('Профиль')),
+    ];
+    final pages = DecoratedBox(
+      // A faint accent glow at the top of every tab.
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.center,
+          colors: [FitColors.tint, FitColors.background],
+        ),
+      ),
+      child: SafeArea(
+        child: IndexedStack(
+          index: _index,
+          children: [
+            PageWidth(child: HomeScreen(onNavigate: _select)),
+            PageWidth(
+              maxWidth: 1180,
+              child: CatalogScreen(key: ValueKey('catalog-$_catalogVisit'), onTryOn: _addToOutfit),
+            ),
+            PageWidth(child: TryOnScreen(key: _tryOnKey)),
+            PageWidth(maxWidth: 1180, child: LooksScreen(key: ValueKey('looks-$_looksVisit'))),
+            const PageWidth(child: ProfileScreen()),
+          ],
+        ),
+      ),
+    );
     return Scaffold(
-      body: DecoratedBox(
-        // A faint accent glow at the top of every tab.
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.center,
-            colors: [FitColors.tint, FitColors.background],
-          ),
-        ),
-        child: SafeArea(
-          child: IndexedStack(
-            index: _index,
-            children: [
-              HomeScreen(onNavigate: _select),
-              CatalogScreen(key: ValueKey('catalog-$_catalogVisit'), onTryOn: _addToOutfit),
-              TryOnScreen(key: _tryOnKey),
-              LooksScreen(key: ValueKey('looks-$_looksVisit')),
-              const ProfileScreen(),
-            ],
-          ),
-        ),
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: _select,
-        destinations: [
-          NavigationDestination(
-            icon: const Icon(Icons.home_outlined),
-            selectedIcon: const Icon(Icons.home_rounded),
-            label: t('Главная'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.checkroom_outlined),
-            selectedIcon: const Icon(Icons.checkroom),
-            label: t('Каталог'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.auto_awesome_outlined),
-            selectedIcon: const Icon(Icons.auto_awesome),
-            label: t('Примерка'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.favorite_border),
-            selectedIcon: const Icon(Icons.favorite),
-            label: t('Луки'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.person_outline),
-            selectedIcon: const Icon(Icons.person),
-            label: t('Профиль'),
-          ),
-        ],
-      ),
+      body: !wide
+          ? pages
+          : Row(
+              children: [
+                NavigationRail(
+                  selectedIndex: _index,
+                  onDestinationSelected: _select,
+                  extended: extended,
+                  minExtendedWidth: 200,
+                  labelType: extended ? NavigationRailLabelType.none : NavigationRailLabelType.all,
+                  leading: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                      extended ? 'FitMe AI' : 'FitMe',
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: FitColors.accentSoft),
+                    ),
+                  ),
+                  destinations: [
+                    for (final (icon, selected, label) in tabs)
+                      NavigationRailDestination(
+                        icon: Icon(icon),
+                        selectedIcon: Icon(selected),
+                        label: Text(label),
+                      ),
+                  ],
+                ),
+                VerticalDivider(width: 1, color: FitColors.line),
+                Expanded(child: pages),
+              ],
+            ),
+      bottomNavigationBar: wide
+          ? null
+          : NavigationBar(
+              selectedIndex: _index,
+              onDestinationSelected: _select,
+              destinations: [
+                for (final (icon, selected, label) in tabs)
+                  NavigationDestination(
+                    icon: Icon(icon),
+                    selectedIcon: Icon(selected),
+                    label: label,
+                  ),
+              ],
+            ),
     );
   }
 }
@@ -358,6 +403,7 @@ class _ServerStatusCardState extends State<ServerStatusCard> {
   bool aiReady = false;
   String? gpu;
   bool upscaler = false;
+  bool wrongKey = false;
   String? problem;
 
   @override
@@ -386,6 +432,7 @@ class _ServerStatusCardState extends State<ServerStatusCard> {
     String? gpuName;
     var up = false;
     String? error;
+    var badKey = false;
     if (ok) {
       try {
         final status = await FitMeApi.aiStatus();
@@ -396,6 +443,7 @@ class _ServerStatusCardState extends State<ServerStatusCard> {
       } catch (e) {
         ok = false;
         error = e.toString();
+        badKey = e is FitMeApiException && e.code == kBadKeyCode;
       }
     }
     if (!mounted) return;
@@ -405,8 +453,36 @@ class _ServerStatusCardState extends State<ServerStatusCard> {
       aiReady = ai;
       gpu = gpuName;
       upscaler = up;
+      wrongKey = badKey;
       problem = error;
     });
+  }
+
+  /// A website has no key built in: it is typed here when the link did not carry it.
+  Future<void> _enterKey() async {
+    final ctrl = TextEditingController(text: ServerConfig.accessKey);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(t('Ключ доступа')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: ctrl, autofocus: true),
+            const SizedBox(height: 8),
+            HintText(t('Ключ показан в окне START_LOCAL_GPU.bat на ноутбуке.')),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(t('Отмена'))),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, ctrl.text), child: Text(t('Сохранить'))),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (value == null) return;
+    ServerConfig.setAccessKey(value);
+    await _check();
   }
 
   @override
@@ -479,6 +555,8 @@ class _ServerStatusCardState extends State<ServerStatusCard> {
                         'Ноутбук должен быть включён.'),
                   ),
                 ],
+                if (kIsWeb && !checking && wrongKey)
+                  TextButton(onPressed: _enterKey, child: Text(t('Ввести ключ'))),
               ],
             ),
           ),
@@ -516,6 +594,7 @@ class _HomeScreenState extends State<HomeScreen> {
           subtitle: t('Виртуальная примерочная'),
         ),
         const ServerStatusCard(),
+        const AppDownloadCard(),
         const SizedBox(height: 14),
         Row(
           children: [
@@ -980,14 +1059,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
         ),
-        const SizedBox(height: 8),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: HintText(
-            t('Дома телефон подключается к ноутбуку по Wi-Fi, вне дома — через интернет-туннель. '
-                'Ноутбук должен быть включён с запущенным START_LOCAL_GPU.bat.'),
+        if (!kIsWeb) ...[
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: HintText(
+              t('Дома телефон подключается к ноутбуку по Wi-Fi, вне дома — через интернет-туннель. '
+                  'Ноутбук должен быть включён с запущенным START_LOCAL_GPU.bat.'),
+            ),
           ),
-        ),
+        ],
       ],
     );
   }

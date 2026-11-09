@@ -20,8 +20,11 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+if not exist web\downloads mkdir web\downloads
+copy /y build\app\outputs\flutter-apk\app-release.apk web\downloads\FitMe.apk >nul
 echo.
 echo APK: %~dp0build\app\outputs\flutter-apk\app-release.apk
+echo Also copied to web\downloads\FitMe.apk: the site offers it after the next site build.
 explorer "%~dp0build\app\outputs\flutter-apk"
 pause
 endlocal

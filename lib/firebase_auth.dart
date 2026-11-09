@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+
+import 'package:http/http.dart' as http;
 
 import 'firebase_options.dart';
 import 'i18n.dart';
@@ -18,27 +19,32 @@ class FirebaseAuthApi {
     if (!configured) {
       throw FirebaseAuthError('NOT_CONFIGURED', t('Вход ещё не настроен: запустите SETUP_FIREBASE.bat и пересоберите приложение.'));
     }
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+    final client = http.Client();
     try {
-      final request = await client.postUrl(Uri.parse(url)).timeout(const Duration(seconds: 15));
-      request.headers.contentType = ContentType.json;
-      // Letters from Firebase (confirmation, password reset) in the app's language.
-      request.headers.set('X-Firebase-Locale', AppSettings.lang.code);
-      request.write(jsonEncode(body));
-      final response = await request.close().timeout(const Duration(seconds: 20));
-      final text = await response.transform(utf8.decoder).join();
+      final response = await client
+          .post(
+            Uri.parse(url),
+            headers: {
+              'Content-Type': 'application/json',
+              // Letters from Firebase (confirmation, password reset) in the app's language.
+              'X-Firebase-Locale': AppSettings.lang.code,
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 20));
+      final text = utf8.decode(response.bodyBytes);
       final data = text.isEmpty ? <String, dynamic>{} : jsonDecode(text) as Map<String, dynamic>;
       if (response.statusCode != 200) {
         final code = ((data['error'] as Map?)?['message'] ?? 'HTTP_${response.statusCode}').toString();
         throw FirebaseAuthError(code, messageFor(code));
       }
       return data;
-    } on SocketException {
+    } on http.ClientException {
       throw FirebaseAuthError('NETWORK', t('Нет интернета — проверьте подключение.'));
     } on TimeoutException {
       throw FirebaseAuthError('NETWORK', t('Нет интернета — проверьте подключение.'));
     } finally {
-      client.close(force: true);
+      client.close();
     }
   }
 
